@@ -160,8 +160,10 @@ class BleakScannerBGAPI(BaseBleakScanner):
                 # FIXME - um, shortened name? do we just call that local name?
                 local_name = dat.decode("utf8")
             if type == 0x0a:
-                # FIXME - is this correct maths?
-                tx_power = dat[0] - 127
+                tx_power, = struct.unpack_from("<b", dat, 0)
+            if type == 0x16:
+                # FIXME - service data.
+                pass
             if type == 0xff:
                 vendor, = struct.unpack("<h", dat[0:2])
                 manufacturer_data[vendor] = dat[2:]
