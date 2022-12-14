@@ -32,19 +32,30 @@ class BleakScannerBGAPI(BaseBleakScanner):
     ):
 
         super(BleakScannerBGAPI, self).__init__(detection_callback, service_uuids)
-        self._scanning_mode = scanning_mode
         self._adapter: Optional[str] = kwargs.get("adapter", kwargs.get("ncp"))
 
         self._bgapi = kwargs.get("bgapi", "/home/karlp/SimplicityStudio/SDKs/gecko_sdk_2/protocol/bluetooth/api/sl_bt.xapi")
 
-        if self._scanning_mode == "passive" and service_uuids:
+        self._loop = asyncio.get_running_loop()
+        self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi, event_handler=self._bgapi_evt_handler)
+
+        scan_modes = {
+            "passive": self._lib.bt.scanner.SCAN_MODE_SCAN_MODE_PASSIVE,
+            "active": self._lib.bt.scanner.SCAN_MODE_SCAN_MODE_ACTIVE,
+        }
+        # TODO - might make this a "backend option"?
+        self._phy = self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED
+        # TODO - might make this a "backend option"?
+        # Discover mode seems to be an internal filter on what it sees?
+        # maybe use the "filters" blob for this?
+        # I definitely need OBSERVATION for my own stuff at least.
+        #self._discover_mode = self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_GENERIC
+        self._discover_mode = self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_OBSERVATION
+        self._scanning_mode = scan_modes.get(scanning_mode, scan_modes["passive"])
+        if scanning_mode == "passive" and service_uuids:
             logger.warning(
                 "service uuid filtering with passive scanning is super unreliable..."
             )
-
-        self._loop = asyncio.get_running_loop()
-        self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi, event_handler=self._bgapi_evt_handler)
-        #self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi)
 
         # Don't bother supporting the deprecated set_scanning_filter in new work.
         self._scanning_filters = {}
@@ -62,50 +73,12 @@ class BleakScannerBGAPI(BaseBleakScanner):
         if evt == "bt_evt_system_boot":
             # This handles starting scanning if we were reset...
             logger.debug("NCP booted: %d.%d.%db%d hw:%d hash: %x", evt.major, evt.minor, evt.patch, evt.build, evt.hw, evt.hash)
-            self._loop.call_soon_threadsafe(self._lib.bt.scanner.start, self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED, self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_OBSERVATION)
+            self._loop.call_soon_threadsafe(self._lib.bt.scanner.set_mode, self._phy, self._scanning_mode)
+            self._loop.call_soon_threadsafe(self._lib.bt.scanner.start, self._phy, self._discover_mode)
         elif evt == "bt_evt_scanner_legacy_advertisement_report":
             rssif = self._scanning_filters.get("rssi",  -255)
             if evt.rssi > rssif:
                 self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
-
-
-    async def _passive_scan(self):
-        # I think this is where I need to run the bgapi event loop?
-
-        def _evt_handler(evt):
-            #print(f"passive evthandler: {evt}")
-            if evt == "bt_evt_system_boot":
-                logger.debug("NCP booted: %d.%d.%db%d hw:%d hash: %x", evt.major, evt.minor, evt.patch, evt.build, evt.hw, evt.hash)
-                # Do we need to use thread safe cool soon shits?
-                self._lib.bt.scanner.start(self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED, self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_OBSERVATION)
-            elif evt == "bt_evt_scanner_legacy_advertisement_report":
-                # Create adv data here...
-                rssif = self._scanning_filters.get("rssi",  -255)
-                if evt.rssi > rssif:
-                    self._handle_advertising_data(evt, evt.data)
-
-            elif evt == "bt_evt_scanner_extended_advertisement_report":
-                logger.debug("got extended adv %s", evt)
-            else:
-                logger.debug("Unhandled evt: %s", evt)
-
-        self._should_run = asyncio.Event()
-        self._should_run.set()
-
-        def blocking_bgapi():
-            while self._should_run.is_set():
-                for e in self._lib.gen_events(timeout=None, max_time=1):
-                    _evt_handler(e)
-
-
-        self._lib.bt.system.reset(0)
-        #loop = asyncio.get_running_loop()
-        #result = await loop.run_in_executor(None, blocking_bgapi)
-        #task = asyncio.create_task(blocking_bgapi())
-        #return task
-        return self
-
-
 
     async def start(self):
         self._lib.open()  # this starts a new thread.... do we need to asyncio wrap any of that?
