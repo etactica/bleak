@@ -81,8 +81,14 @@ class BleakScannerBGAPI(BaseBleakScanner):
                 self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
 
     async def start(self):
-        self._lib.open()  # this starts a new thread.... do we need to asyncio wrap any of that?
-        self._lib.bt.system.hello()
+        self._lib.open()  # this starts a new thread, remember that!
+        # XXX make this more reliable? if it fails hello, try again, try reset?
+        try:
+            ok = self._lib.bt.system.hello()
+            print("we succeeed in hello", ok)
+        except bgapi.bglib.CommandError as e:
+            print("failed to hello...")
+            raise
         # Get Bluetooth address
         _, self.address, self.address_type = self._lib.bt.system.get_identity_address()
         logger.info("Our Bluetooth %s address: %s",
@@ -93,10 +99,11 @@ class BleakScannerBGAPI(BaseBleakScanner):
         # start scanning anyway.  We may want to change this if you want to
         # turn scanning on / off while staying connected to other devices?
         # but that will require quite a bit more state detection?
-        #self._lib.bt.system.reset(0)
+        self._lib.bt.system.reset(0)
         # Alternately, just explicitly try and call start ourselves...
         # Chances of the bluetooth stack not being booted are ... 0?
-        self._lib.bt.scanner.start(self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED, self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_OBSERVATION)
+        #self._lib.bt.scanner.set_mode(self._phy, self._scanning_mode)
+        #self._lib.bt.scanner.start(self.phy, self._scanning_mode)
 
 
     async def stop(self):
