@@ -178,7 +178,8 @@ class BleakScannerBGAPI(BaseBleakScanner):
             platform_data=None
        )
         # Pretty sure "None" for the platform handle for this device isn't helpful?
-        device = self.create_or_update_device(evt.address, "fakeit", evt.address, advertisement_data)
+        devname = local_name if local_name else evt.address.replace(":", "-").upper()
+        device = self.create_or_update_device(evt.address, devname, evt.address, advertisement_data)
         if self._callback is None:
             return
 
