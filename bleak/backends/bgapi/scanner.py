@@ -42,14 +42,32 @@ class BleakScannerBGAPI(BaseBleakScanner):
                 "service uuid filtering with passive scanning is super unreliable..."
             )
 
-        #self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi, event_handler=self._evt_handler)
-        self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi)
+        self._loop = asyncio.get_running_loop()
+        self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi, event_handler=self._bgapi_evt_handler)
+        #self._lib = bgapi.BGLib(bgapi.SerialConnector(self._adapter), self._bgapi)
 
         # Don't bother supporting the deprecated set_scanning_filter in new work.
         self._scanning_filters = {}
         filters = kwargs.get("filters")
         if "filters":
             self._scanning_filters = filters
+
+    def _bgapi_evt_handler(self, evt):
+        """
+        THIS RUNS IN THE BGLIB THREAD!
+        and because of this, we can't call commands from here ourself, we'd have to
+        recall them back onto the other thread?
+        """
+        #print(f"received bgapi evt:  {evt}")
+        if evt == "bt_evt_system_boot":
+            # This handles starting scanning if we were reset...
+            logger.debug("NCP booted: %d.%d.%db%d hw:%d hash: %x", evt.major, evt.minor, evt.patch, evt.build, evt.hw, evt.hash)
+            self._loop.call_soon_threadsafe(self._lib.bt.scanner.start, self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED, self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_OBSERVATION)
+        elif evt == "bt_evt_scanner_legacy_advertisement_report":
+            rssif = self._scanning_filters.get("rssi",  -255)
+            if evt.rssi > rssif:
+                self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
+
 
     async def _passive_scan(self):
         # I think this is where I need to run the bgapi event loop?
@@ -81,9 +99,11 @@ class BleakScannerBGAPI(BaseBleakScanner):
 
 
         self._lib.bt.system.reset(0)
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, blocking_bgapi)
+        #loop = asyncio.get_running_loop()
+        #result = await loop.run_in_executor(None, blocking_bgapi)
+        #task = asyncio.create_task(blocking_bgapi())
+        #return task
+        return self
 
 
 
@@ -96,14 +116,19 @@ class BleakScannerBGAPI(BaseBleakScanner):
                       "static random" if self.address_type else "public device",
                       self.address)
 
-        # This needs to await on some scan result here....?
-        await self._passive_scan()
+        # Calling reset gets us into a known state, and we're being asked to
+        # start scanning anyway.  We may want to change this if you want to
+        # turn scanning on / off while staying connected to other devices?
+        # but that will require quite a bit more state detection?
+        #self._lib.bt.system.reset(0)
+        # Alternately, just explicitly try and call start ourselves...
+        # Chances of the bluetooth stack not being booted are ... 0?
+        self._lib.bt.scanner.start(self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED, self._lib.bt.scanner.DISCOVER_MODE_DISCOVER_OBSERVATION)
 
 
     async def stop(self):
         logger.debug("Stopping scanner")
-        self._should_run.clear()
-        # wait here?
+        self._lib.bt.scanner.stop()
         self._lib.close()
 
 
