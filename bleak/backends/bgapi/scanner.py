@@ -166,7 +166,7 @@ class BleakScannerBGAPI(BaseBleakScanner):
                 # FIXME - service data.
                 pass
             if type == 0xff:
-                vendor, = struct.unpack("<h", dat[0:2])
+                vendor, = struct.unpack("<H", dat[0:2])
                 manufacturer_data[vendor] = dat[2:]
 
         advertisement_data = AdvertisementData(
