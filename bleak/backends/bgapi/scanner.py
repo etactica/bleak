@@ -83,12 +83,7 @@ class BleakScannerBGAPI(BaseBleakScanner):
     async def start(self):
         self._lib.open()  # this starts a new thread, remember that!
         # XXX make this more reliable? if it fails hello, try again, try reset?
-        try:
-            ok = self._lib.bt.system.hello()
-            print("we succeeed in hello", ok)
-        except bgapi.bglib.CommandError as e:
-            print("failed to hello...")
-            raise
+        self._lib.bt.system.hello()
         # Get Bluetooth address
         _, self.address, self.address_type = self._lib.bt.system.get_identity_address()
         logger.info("Our Bluetooth %s address: %s",
