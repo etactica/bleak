@@ -44,7 +44,8 @@ class BleakScannerBGAPI(BaseBleakScanner):
             "active": self._lib.bt.scanner.SCAN_MODE_SCAN_MODE_ACTIVE,
         }
         # TODO - might make this a "backend option"?
-        self._phy = self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED
+        #self._phy = self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M_AND_CODED
+        self._phy = self._lib.bt.scanner.SCAN_PHY_SCAN_PHY_1M
         # TODO - might make this a "backend option"?
         # Discover mode seems to be an internal filter on what it sees?
         # maybe use the "filters" blob for this?
@@ -73,12 +74,21 @@ class BleakScannerBGAPI(BaseBleakScanner):
         if evt == "bt_evt_system_boot":
             # This handles starting scanning if we were reset...
             logger.debug("NCP booted: %d.%d.%db%d hw:%d hash: %x", evt.major, evt.minor, evt.patch, evt.build, evt.hw, evt.hash)
-            self._loop.call_soon_threadsafe(self._lib.bt.scanner.set_mode, self._phy, self._scanning_mode)
+            #self._loop.call_soon_threadsafe(self._lib.bt.scanner.set_mode, self._phy, self._scanning_mode)
+            self._loop.call_soon_threadsafe(self._lib.bt.scanner.set_parameters, self._scanning_mode, 0x10, 0x10)
             self._loop.call_soon_threadsafe(self._lib.bt.scanner.start, self._phy, self._discover_mode)
         elif evt == "bt_evt_scanner_legacy_advertisement_report":
             rssif = self._scanning_filters.get("rssi",  -255)
-            if evt.rssi > rssif:
+            addr_match = self._scanning_filters.get("address", False)
+            if evt.rssi > rssif and addr_match and addr_match == evt.address:
                 self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
+        elif evt == "bt_evt_scanner_extended_advertisement_report":
+            rssif = self._scanning_filters.get("rssi",  -255)
+            addr_match = self._scanning_filters.get("address", False)
+            if evt.rssi > rssif and addr_match and addr_match == evt.address:
+                self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
+        else:
+            logger.warning(f"unhandled bgapi evt! {evt}")
 
     async def start(self):
         self._lib.open()  # this starts a new thread, remember that!
@@ -149,11 +159,14 @@ class BleakScannerBGAPI(BaseBleakScanner):
             # Ok, do a little extra magic?
             # Assigned numbers sec 2.3
             if type in [0x2, 0x3]:
-                # meh, at least attempt to get 16bit service ids...
                 num = len(dat) // 2
-                uuids16 = [struct.unpack_from("<h", dat, a*2)[0] for a in range(num)]
-                service_uuids.extend(uuids16)
-            if type in [4,5,6,7]:
+                uuids16 = [struct.unpack_from("<H", dat, a*2)[0] for a in range(num)]
+                service_uuids.extend([f"0000{a:04x}-0000-1000-8000-00805f9b34fb" for a in uuids16])
+            if type in [4, 5]:
+                num = len(dat) // 4
+                uuids32 = [struct.unpack_from("<L", dat, a*2)[0] for a in range(num)]
+                service_uuids.extend([f"{a:08x}-0000-1000-8000-00805f9b34fb" for a in uuids32])
+            if type in [6, 7]:
                 # FIXME handle 32 and 128bit explicit services?
                 pass
             if type in [0x08, 0x09]:
