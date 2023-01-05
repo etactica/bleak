@@ -113,11 +113,14 @@ class BleakScannerBGAPI(BaseBleakScanner):
     async def stop(self):
         logger.debug("Stopping scanner")
         self._lib.bt.scanner.stop()
+        # FIXME - perhaps try and flush it's buffer here?
         self._lib.close()
 
 
     def set_scanning_filter(self, **kwargs):
         # BGAPI doesn't do any itself, but doing it bleak can still be very userfriendly.
+        # Actually, latest versions offer: sl_bt_system_linklayer_config_key_set_rx_packet_filtering
+        # which in theory should let you do some/many things.
         self._scanning_filters = kwargs
         #raise NotImplementedError("BGAPI doesn't provide NCP level filters")
 
