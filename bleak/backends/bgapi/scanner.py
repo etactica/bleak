@@ -77,15 +77,13 @@ class BleakScannerBGAPI(BaseBleakScanner):
             #self._loop.call_soon_threadsafe(self._lib.bt.scanner.set_mode, self._phy, self._scanning_mode)
             self._loop.call_soon_threadsafe(self._lib.bt.scanner.set_parameters, self._scanning_mode, 0x10, 0x10)
             self._loop.call_soon_threadsafe(self._lib.bt.scanner.start, self._phy, self._discover_mode)
-        elif evt == "bt_evt_scanner_legacy_advertisement_report":
+        elif evt == "bt_evt_scanner_legacy_advertisement_report" or evt == "bt_evt_scanner_extended_advertisement_report":
             rssif = self._scanning_filters.get("rssi",  -255)
             addr_match = self._scanning_filters.get("address", False)
-            if evt.rssi > rssif and addr_match and addr_match == evt.address:
-                self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
-        elif evt == "bt_evt_scanner_extended_advertisement_report":
-            rssif = self._scanning_filters.get("rssi",  -255)
-            addr_match = self._scanning_filters.get("address", False)
-            if evt.rssi > rssif and addr_match and addr_match == evt.address:
+            addr_matches = True
+            if addr_match and addr_match != evt.address:
+                addr_matches = False
+            if evt.rssi > rssif and addr_matches:
                 self._loop.call_soon_threadsafe(self._handle_advertising_data, evt, evt.data)
         else:
             logger.warning(f"unhandled bgapi evt! {evt}")
