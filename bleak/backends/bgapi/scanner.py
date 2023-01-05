@@ -3,6 +3,7 @@ import logging
 import struct
 import sys
 from typing import Callable, Coroutine, Dict, List, Optional
+import uuid
 from warnings import warn
 
 import bgapi
@@ -126,13 +127,8 @@ class BleakScannerBGAPI(BaseBleakScanner):
         :param data:
         :return:
         """
-        # There's more stuff in the evt, like flags, channel, address type,
-        # target address?  at least the flags are interesting?
 
         items = {}
-        #if len(raw) == 0:
-        #    # FIXME - No, need to callback with an empty AD, but real Device?
-        #    return
         index = 0
         # This feels gross, I know I've done this neater before...
         while index < len(raw):
@@ -147,6 +143,7 @@ class BleakScannerBGAPI(BaseBleakScanner):
             dat = chunk[1:]
             items[type] = (type, dat)
 
+        flags = None
         local_name = None
         service_uuids = []
         manufacturer_data = {}
@@ -156,38 +153,53 @@ class BleakScannerBGAPI(BaseBleakScanner):
         for type, dat in items.values():
             # Ok, do a little extra magic?
             # Assigned numbers sec 2.3
-            if type in [0x2, 0x3]:
+            if type == 1:
+                assert(len(dat) == 1)
+                flags = dat[0]
+            elif type in [0x2, 0x3]:
                 num = len(dat) // 2
                 uuids16 = [struct.unpack_from("<H", dat, a*2)[0] for a in range(num)]
                 service_uuids.extend([f"0000{a:04x}-0000-1000-8000-00805f9b34fb" for a in uuids16])
-            if type in [4, 5]:
+            elif type in [4, 5]:
                 num = len(dat) // 4
                 uuids32 = [struct.unpack_from("<L", dat, a*2)[0] for a in range(num)]
                 service_uuids.extend([f"{a:08x}-0000-1000-8000-00805f9b34fb" for a in uuids32])
-            if type in [6, 7]:
-                # FIXME handle 32 and 128bit explicit services?
-                pass
-            if type in [0x08, 0x09]:
+            elif type in [6, 7]:
+                # FIXME - can we have multiple 128bits in the advertisement?
+                assert(len(dat) == 16)
+                # Thanks for the reversal silabs.
+                service_uuids.extend([f"{uuid.UUID(bytes=bytes(reversed(dat)))}"])
+            elif type in [0x08, 0x09]:
                 # FIXME - um, shortened name? do we just call that local name?
                 # XXX - sometimes we get trailing zero bytes here? just remove them.
                 local_name = dat.decode("utf8").rstrip('\0')
-            if type == 0x0a:
+            elif type == 0x0a:
                 tx_power, = struct.unpack_from("<b", dat, 0)
-            if type == 0x16:
-                # FIXME - service data.
-                pass
-            if type == 0xff:
+            elif type == 0x16:
+                uuid16, = struct.unpack("<H", dat[:2])
+                service_data[f"0000{uuid16:04x}-0000-1000-8000-00805f9b34fb"] = dat[2:]
+            elif type == 0x20:
+                uuid32, = struct.unpack("<H", dat[:4])
+                service_data[f"{uuid32:084x}-0000-1000-8000-00805f9b34fb"] = dat[4:]
+            elif type == 0x21:
+                # FIXME untested
+                uuid128 = f"{uuid.UUID(bytes=bytes(reversed(dat[0:16])))}"
+                service_data[uuid128] = dat[16:]
+                logger.warning("Untested 128bit service data! %s", service_data)
+            elif type == 0xff:
                 vendor, = struct.unpack("<H", dat[0:2])
                 manufacturer_data[vendor] = dat[2:]
+            else:
+                logger.debug("Unhandled advertising type: %d(%#x) of len %d", type, type, len(dat))
 
         advertisement_data = AdvertisementData(
             local_name=local_name,
             manufacturer_data=manufacturer_data,
-            service_data=None, # FIXME
+            service_data=service_data,
             service_uuids=service_uuids,
             tx_power=tx_power,
             rssi=evt.rssi,
-            platform_data=None
+            platform_data=(dict(flags=flags),), # do we need/want more?
        )
         # Pretty sure "None" for the platform handle for this device isn't helpful?
         devname = local_name if local_name else evt.address.replace(":", "-").upper()
